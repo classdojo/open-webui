@@ -274,13 +274,15 @@ export const deleteAutomationById = async (token: string, id: string) => {
 	return res;
 };
 
-// classdojo: fetch the automation's latest generated chat. Authorized by
-// automation access (owner / co-owner / public), not chat ownership, so shared
-// users can open it.
-export const getAutomationChat = async (token: string, id: string) => {
+// classdojo: fetch one of the automation's generated chats (a specific run's
+// chat when chatId is given, else the latest). Authorized by automation access
+// (owner / co-owner / public), not chat ownership, so shared users can open it
+// read-only.
+export const getAutomationChat = async (token: string, id: string, chatId: string | null = null) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/automations/${id}/chat`, {
+	const query = chatId ? `?chat_id=${encodeURIComponent(chatId)}` : '';
+	const res = await fetch(`${WEBUI_API_BASE_URL}/automations/${id}/chat${query}`, {
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',

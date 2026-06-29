@@ -347,6 +347,18 @@ class AutomationRunTable:
             await db.refresh(row)
             return AutomationRunModel.model_validate(row)
 
+    async def get_by_chat_id(
+        self, automation_id: str, chat_id: str, db: Optional[AsyncSession] = None
+    ) -> Optional[AutomationRunModel]:
+        """classdojo: a run of this automation that produced the given chat — used to
+        authorize read-only chat viewing through the automation's permissions."""
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(AutomationRun).filter_by(automation_id=automation_id, chat_id=chat_id).limit(1)
+            )
+            row = result.scalars().first()
+            return AutomationRunModel.model_validate(row) if row else None
+
     async def get_latest(self, automation_id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationRunModel]:
         async with get_async_db_context(db) as db:
             result = await db.execute(

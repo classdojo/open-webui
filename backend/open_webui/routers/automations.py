@@ -284,7 +284,10 @@ async def run_automation_by_id(
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
     await check_automation_manage(automation, user, db)
-    asyncio.create_task(execute_automation(request.app, automation))
+    # classdojo: a manual "Run now" executes as the triggering user (owner or
+    # co-owner) with their own OIDC; scheduled runs use the owner (see
+    # execute_automation / scheduler_worker_loop).
+    asyncio.create_task(execute_automation(request.app, automation, run_as_user_id=user.id))
     return await enrich_automation(automation, db, tz=user.timezone)
 
 
@@ -336,24 +339,33 @@ async def get_automation_runs(
 async def get_automation_chat(
     request: Request,
     id: str,
+    chat_id: Optional[str] = None,
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    """Return the automation's latest generated chat to anyone who can view the
-    automation. The chat is owned by the automation owner and has no access
-    control of its own, so co-owners (and viewers of public automations) reach
-    it through the automation's permissions rather than chat ownership."""
+    """Return one of the automation's generated chats (a specific run's chat when
+    chat_id is given, otherwise the latest) to anyone who can view the automation.
+    The chat is owned by whoever ran it and has no access control of its own, so
+    co-owners (and viewers of public automations) reach it through the
+    automation's permissions rather than chat ownership. Read-only for the UI."""
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
     await check_automation_view(automation, user, db)
 
-    latest = await AutomationRuns.get_latest(id, db=db)
-    if not latest or not latest.chat_id:
+    if chat_id:
+        # Only chats produced by a run of *this* automation are viewable here.
+        run = await AutomationRuns.get_by_chat_id(id, chat_id, db=db)
+        target_chat_id = run.chat_id if run else None
+    else:
+        latest = await AutomationRuns.get_latest(id, db=db)
+        target_chat_id = latest.chat_id if latest else None
+
+    if not target_chat_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
-    chat = await Chats.get_chat_by_id(latest.chat_id, db=db)
+    chat = await Chats.get_chat_by_id(target_chat_id, db=db)
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

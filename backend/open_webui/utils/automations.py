@@ -346,15 +346,22 @@ async def _set_terminal_cwd(app, server_id: str, user, cwd: str, chat_id: str) -
         log.warning(f'Failed to set terminal CWD: {e}')
 
 
-async def execute_automation(app, automation: AutomationModel) -> None:
+async def execute_automation(app, automation: AutomationModel, run_as_user_id: Optional[str] = None) -> None:
     """Execute an automation through the full chat completion pipeline.
 
     Creates a real chat, then calls chat_completion exactly like the frontend:
     session_id + chat_id + message_id → async task → pipeline handles everything
     (filters, model params, knowledge/RAG, tools, DB saves, webhooks).
+
+    classdojo: scheduled runs have no live user, so they execute as the
+    automation owner (``automation.user_id``) and forward the owner's stored
+    OIDC/OAuth session. A manual "Run now" passes ``run_as_user_id`` (the
+    triggering co-owner), so the run executes with that user's identity and
+    their own OIDC, and the resulting chat is owned by them.
     """
     try:
-        user = await Users.get_user_by_id(automation.user_id)
+        effective_user_id = run_as_user_id or automation.user_id
+        user = await Users.get_user_by_id(effective_user_id)
         if not user:
             await _record_run(automation.id, 'error', error='User not found')
             return
@@ -370,7 +377,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         chat_id = str(uuid4())
         chat = await Chats.insert_new_chat(
             chat_id,
-            automation.user_id,
+            effective_user_id,
             ChatForm(
                 chat={
                     'title': automation.name,
@@ -421,7 +428,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
                 'message_id': user_msg_id,
                 'data': {'type': 'chat:list'},
             },
-            room=f'user:{automation.user_id}',
+            room=f'user:{effective_user_id}',
         )
 
         # Resolve model defaults (frontend does this, backend doesn't)
@@ -474,7 +481,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
                 'chat_id': chat.id,
                 'status': 'success',
             },
-            room=f'user:{automation.user_id}',
+            room=f'user:{effective_user_id}',
         )
 
         await _record_run(automation.id, 'success', chat_id=chat.id)

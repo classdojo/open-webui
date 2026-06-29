@@ -29,6 +29,7 @@
 	import ScheduleDropdown from '$lib/components/automations/ScheduleDropdown.svelte';
 	import ModelDropdown from '$lib/components/automations/ModelDropdown.svelte';
 	import AccessControl from '$lib/components/workspace/common/AccessControl.svelte';
+	import AutomationChatModal from '$lib/components/automations/AutomationChatModal.svelte';
 
 	dayjs.extend(relativeTime);
 	dayjs.extend(localizedFormat);
@@ -43,6 +44,9 @@
 	let is_active = true;
 	// classdojo: sharing grants — public ('*' read), shared viewers (read) or co-owners (write).
 	let accessGrants: any[] = [];
+	// classdojo: read-only viewer for a run's generated chat (works for non-owners).
+	let showChatModal = false;
+	let chatModalChatId: string | null = null;
 
 	let loading = false;
 	let saving = false;
@@ -217,6 +221,13 @@
 		{$i18n.t('This will delete')} <span class="">{automation.name}</span>.
 	</div>
 </DeleteConfirmDialog>
+
+<!-- classdojo: read-only viewer for a run's generated chat -->
+<AutomationChatModal
+	bind:show={showChatModal}
+	automationId={automation.id}
+	chatId={chatModalChatId}
+/>
 
 <div
 	class="flex flex-col w-full h-screen max-h-[100dvh] transition-width duration-200 ease-in-out {$showSidebar
@@ -410,7 +421,14 @@
 											? 'cursor-pointer'
 											: 'cursor-default'}"
 										on:click={() => {
-											if (run.chat_id) goto(`/c/${run.chat_id}`);
+											// classdojo: open the run's chat read-only via the automation,
+											// so co-owners and public viewers (who don't own the chat) can
+											// see it. The chat owner still has the interactive copy in
+											// their own chat list.
+											if (run.chat_id) {
+												chatModalChatId = run.chat_id;
+												showChatModal = true;
+											}
 										}}
 										type="button"
 									>
