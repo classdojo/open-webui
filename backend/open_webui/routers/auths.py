@@ -1731,4 +1731,32 @@ async def token_exchange(
             db=db,
         )
 
+    try:
+        # classdojo: Token exchange is used by trusted in-cluster callers such as
+        # Toolshed. Persist the exchanged Okta bearer as an OAuth session so
+        # internal callers without browser cookies, especially scheduled
+        # automations, can later resolve system_oauth headers for this same
+        # Open WebUI user.
+        await OAuthSessions.delete_sessions_by_user_id_and_provider(
+            user.id,
+            provider,
+            db=db,
+        )
+        session = await OAuthSessions.create_session(
+            user_id=user.id,
+            provider=provider,
+            token={
+                'access_token': form_data.token,
+                'token_type': 'Bearer',
+                'expires_at': int(time.time() + 3600),
+            },
+            db=db,
+        )
+        if session:
+            log.info(f'Stored token-exchange OAuth session for user {user.id}, provider {provider}')
+        else:
+            log.warning(f'Failed to store token-exchange OAuth session for user {user.id}, provider {provider}')
+    except Exception as e:
+        log.error(f'Failed to store token-exchange OAuth session: {e}')
+
     return await create_session_response(request, user, db, source='oauth')
