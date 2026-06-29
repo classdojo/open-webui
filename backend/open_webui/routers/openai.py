@@ -189,11 +189,27 @@ async def get_headers_and_cookies(
 
         oauth_token = None
         try:
-            if request.cookies.get('oauth_session_id', None):
+            oauth_session_id = request.cookies.get('oauth_session_id', None)
+            if oauth_session_id and user:
                 oauth_token = await request.app.state.oauth_manager.get_oauth_token(
                     user.id,
-                    request.cookies.get('oauth_session_id', None),
+                    oauth_session_id,
                 )
+
+            # classdojo: Scheduled automations and other internal callers do not
+            # have a browser cookie, but they still run as a concrete Open WebUI
+            # user. Reuse that user's most recent OAuth session so system_oauth
+            # OpenAI connections can forward the user's Okta bearer.
+            if oauth_token is None and user:
+                from open_webui.models.oauth_sessions import OAuthSessions
+
+                sessions = await OAuthSessions.get_sessions_by_user_id(user.id)
+                if sessions:
+                    best = max(sessions, key=lambda s: s.updated_at)
+                    oauth_token = await request.app.state.oauth_manager.get_oauth_token(
+                        user.id,
+                        best.id,
+                    )
         except Exception as e:
             log.error(f'Error getting OAuth token: {e}')
 
