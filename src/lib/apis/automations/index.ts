@@ -12,6 +12,15 @@ export type AutomationData = {
 	terminal?: AutomationTerminalConfig;
 };
 
+// classdojo: ownership/sharing grant. null/[] = private; a '*' read grant = public;
+// per-user grants = shared viewers (read) or co-owners (write).
+export type AutomationAccessGrant = {
+	id?: string;
+	principal_type: 'user' | 'group';
+	principal_id: string;
+	permission: 'read' | 'write';
+};
+
 export type AutomationForm = {
 	name: string;
 	data: AutomationData;
@@ -21,6 +30,7 @@ export type AutomationForm = {
 		max_tokens?: number;
 		webhook?: string;
 	};
+	access_grants?: AutomationAccessGrant[] | null;
 	is_active?: boolean;
 };
 
@@ -39,6 +49,7 @@ export type AutomationResponse = {
 	name: string;
 	data: AutomationData;
 	meta: Record<string, any> | null;
+	access_grants: AutomationAccessGrant[] | null;
 	is_active: boolean;
 	last_run_at: number | null;
 	next_run_at: number | null;
@@ -240,6 +251,37 @@ export const deleteAutomationById = async (token: string, id: string) => {
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/automations/${id}/delete`, {
 		method: 'DELETE',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err.detail;
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+// classdojo: fetch the automation's latest generated chat. Authorized by
+// automation access (owner / co-owner / public), not chat ownership, so shared
+// users can open it.
+export const getAutomationChat = async (token: string, id: string) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/automations/${id}/chat`, {
+		method: 'GET',
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',

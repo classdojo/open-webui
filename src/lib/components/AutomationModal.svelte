@@ -53,6 +53,9 @@
 					model_id: model_id.trim(),
 					rrule: scheduleDropdown.buildRrule()
 				},
+				// classdojo: preserve existing sharing grants on edit (set them in the
+				// full editor); new automations start private.
+				access_grants: automation?.access_grants ?? null,
 				is_active
 			};
 

@@ -28,6 +28,7 @@
 
 	import ScheduleDropdown from '$lib/components/automations/ScheduleDropdown.svelte';
 	import ModelDropdown from '$lib/components/automations/ModelDropdown.svelte';
+	import AccessControl from '$lib/components/workspace/common/AccessControl.svelte';
 
 	dayjs.extend(relativeTime);
 	dayjs.extend(localizedFormat);
@@ -40,6 +41,8 @@
 	let prompt = '';
 	let model_id = '';
 	let is_active = true;
+	// classdojo: sharing grants — public ('*' read), shared viewers (read) or co-owners (write).
+	let accessGrants: any[] = [];
 
 	let loading = false;
 	let saving = false;
@@ -93,6 +96,7 @@
 					model_id: model_id.trim(),
 					rrule: scheduleDropdown.buildRrule()
 				},
+				access_grants: accessGrants,
 				is_active
 			};
 			const updated = await updateAutomationById(localStorage.token, automation.id, form);
@@ -190,6 +194,7 @@
 		prompt = automation.data.prompt;
 		model_id = automation.data.model_id;
 		is_active = automation.is_active;
+		accessGrants = automation.access_grants ?? [];
 
 		if (scheduleDropdown) {
 			scheduleDropdown.parseRrule(automation.data.rrule);
@@ -332,6 +337,16 @@
 						<div class="flex items-center justify-between text-xs">
 							<span class="text-gray-600 dark:text-gray-400">{$i18n.t('Model')}</span>
 							<ModelDropdown bind:model_id side="bottom" align="end" onChange={markDirty} />
+						</div>
+
+						<!-- classdojo: Sharing — public, viewers (read), or co-owners (write) -->
+						<div class="pt-2 text-xs">
+							<div class="text-gray-600 dark:text-gray-400 mb-1">{$i18n.t('Sharing')}</div>
+							<AccessControl
+								bind:accessGrants
+								accessRoles={['read', 'write']}
+								onChange={markDirty}
+							/>
 						</div>
 					</div>
 				</div>
