@@ -64,6 +64,8 @@
 	import { getChannels, createNewChannel } from '$lib/apis/channels';
 	import ChannelModal from './Sidebar/ChannelModal.svelte';
 	import ChannelItem from './Sidebar/ChannelItem.svelte';
+	import { getAutomationItems } from '$lib/apis/automations';
+	import AutomationSidebarItem from './Sidebar/AutomationSidebarItem.svelte';
 	import PencilSquare from '../icons/PencilSquare.svelte';
 	import Search from '../icons/Search.svelte';
 	import SearchModal from './SearchModal.svelte';
@@ -97,6 +99,9 @@
 	let showPinnedModels = false;
 	let showPinnedNotes = false;
 	let showChannels = false;
+	// classdojo: sidebar list of automations the user owns, co-owns, or that are public.
+	let showAutomations = false;
+	let automationItems = [];
 	let showFolders = false;
 
 	let folders = {};
@@ -281,6 +286,12 @@
 				)
 			);
 		}
+	};
+
+	const initAutomations = async () => {
+		// classdojo: backend /list returns automations owned, co-owned, or public.
+		const res = await getAutomationItems(localStorage.token, null, null, 1).catch(() => null);
+		automationItems = res?.items ?? [];
 	};
 
 	const initChatList = async () => {
@@ -557,6 +568,13 @@
 						($user?.role === 'admin' || ($user?.permissions?.features?.channels ?? true))
 					) {
 						await initChannels();
+					}
+					// classdojo: list automations the user can see
+					if (
+						$config?.features?.enable_automations &&
+						($user?.role === 'admin' || $user?.permissions?.features?.automations)
+					) {
+						await initAutomations();
 					}
 					await initChatList();
 
@@ -1294,6 +1312,22 @@
 									class=" border-gray-100/40 dark:border-gray-800/10 my-1.5 w-full"
 								/>
 							{/if}
+						{/each}
+					</Folder>
+				{/if}
+
+				<!-- classdojo: Automations list (owned / co-owned / public) -->
+				{#if $config?.features?.enable_automations && ($user?.role === 'admin' || $user?.permissions?.features?.automations) && automationItems.length > 0}
+					<Folder
+						id="sidebar-automations"
+						bind:open={showAutomations}
+						className="px-2 mt-0.5"
+						name={$i18n.t('Automations')}
+						chevron={false}
+						dragAndDrop={false}
+					>
+						{#each automationItems as automation (`${automation?.id}`)}
+							<AutomationSidebarItem {automation} />
 						{/each}
 					</Folder>
 				{/if}
