@@ -66,6 +66,7 @@
 	import ChannelItem from './Sidebar/ChannelItem.svelte';
 	import { getAutomationItems } from '$lib/apis/automations';
 	import AutomationSidebarItem from './Sidebar/AutomationSidebarItem.svelte';
+	import AutomationModal from '$lib/components/AutomationModal.svelte';
 	import PencilSquare from '../icons/PencilSquare.svelte';
 	import Search from '../icons/Search.svelte';
 	import SearchModal from './SearchModal.svelte';
@@ -102,6 +103,7 @@
 	// classdojo: sidebar list of automations the user owns, co-owns, or that are public.
 	let showAutomations = false;
 	let automationItems = [];
+	let showCreateAutomation = false;
 	let showFolders = false;
 
 	let folders = {};
@@ -704,6 +706,18 @@
 		if ($chatId === id) {
 			goto('/');
 			chatId.set('');
+		}
+	}}
+/>
+
+<!-- classdojo: create a new automation straight from the sidebar + button -->
+<AutomationModal
+	bind:show={showCreateAutomation}
+	automation={null}
+	on:save={async (e) => {
+		await initAutomations();
+		if (e.detail?.id) {
+			goto(`/automations/${e.detail.id}`);
 		}
 	}}
 />
@@ -1316,8 +1330,9 @@
 					</Folder>
 				{/if}
 
-				<!-- classdojo: Automations list (owned / co-owned / public) -->
-				{#if $config?.features?.enable_automations && ($user?.role === 'admin' || $user?.permissions?.features?.automations) && automationItems.length > 0}
+				<!-- classdojo: Automations list (owned / co-owned / public). Shown whenever
+				the feature is enabled so the + (new automation) is always reachable. -->
+				{#if $config?.features?.enable_automations && ($user?.role === 'admin' || $user?.permissions?.features?.automations)}
 					<Folder
 						id="sidebar-automations"
 						bind:open={showAutomations}
@@ -1325,6 +1340,10 @@
 						name={$i18n.t('Automations')}
 						chevron={false}
 						dragAndDrop={false}
+						onAdd={() => {
+							showCreateAutomation = true;
+						}}
+						onAddLabel={$i18n.t('New Automation')}
 					>
 						{#each automationItems as automation (`${automation?.id}`)}
 							<AutomationSidebarItem {automation} />
