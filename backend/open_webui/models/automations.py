@@ -24,6 +24,9 @@ class Automation(Base):
     name = Column(Text, nullable=False)
     data = Column(JSON, nullable=False)  # {prompt, model_id, rrule}
     meta = Column(JSON, nullable=True)
+    # classdojo: ownership/sharing grants. None/[] = private (owner only);
+    # a principal_id '*' read grant = public; per-user write grants = co-owners.
+    access_grants = Column(JSON, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     last_run_at = Column(BigInteger, nullable=True)
     next_run_at = Column(BigInteger, nullable=True)
@@ -75,6 +78,7 @@ class AutomationModel(BaseModel):
     name: str
     data: dict
     meta: Optional[dict] = None
+    access_grants: Optional[list] = None
     is_active: bool
     last_run_at: Optional[int] = None
     next_run_at: Optional[int] = None
@@ -98,6 +102,9 @@ class AutomationForm(BaseModel):
     name: str
     data: AutomationData
     meta: Optional[dict] = None
+    # classdojo: access grants (see Automation.access_grants). None keeps the
+    # automation private to its owner.
+    access_grants: Optional[list] = None
     is_active: Optional[bool] = True
 
 
@@ -132,6 +139,7 @@ class AutomationTable:
                 name=form.name,
                 data=form.data.model_dump(),
                 meta=form.meta,
+                access_grants=form.access_grants,
                 is_active=form.is_active,
                 next_run_at=next_run_at,
                 created_at=now,
@@ -170,7 +178,18 @@ class AutomationTable:
         db: Optional[AsyncSession] = None,
     ) -> 'AutomationListResponse':
         async with get_async_db_context(db) as db:
-            stmt = select(Automation).filter_by(user_id=user_id)
+            # classdojo: return automations the user can see — ones they own, ones
+            # shared to them as a co-owner (a grant naming their id), or public
+            # ones (a '*' grant). Grants store quoted principal ids, so matching
+            # the quoted id / '*' in the JSON text is exact for the grant shapes
+            # we create (per-user + public; we never write group grants here).
+            stmt = select(Automation).where(
+                or_(
+                    Automation.user_id == user_id,
+                    cast(Automation.access_grants, String).contains(f'"{user_id}"'),
+                    cast(Automation.access_grants, String).contains('"*"'),
+                )
+            )
 
             if query:
                 search = f'%{query}%'
@@ -219,6 +238,7 @@ class AutomationTable:
             row.name = form.name
             row.data = form.data.model_dump()
             row.meta = form.meta
+            row.access_grants = form.access_grants
             if form.is_active is not None:
                 row.is_active = form.is_active
             row.next_run_at = next_run_at

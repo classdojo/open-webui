@@ -14,7 +14,8 @@ from open_webui.models.automations import (
     AutomationRuns,
     Automations,
 )
-from open_webui.utils.access_control import has_permission
+from open_webui.models.chats import Chats
+from open_webui.utils.access_control import has_access, has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.automations import (
     execute_automation,
@@ -52,17 +53,40 @@ async def check_automations_permission(request, user):
         )
 
 
-def check_automation_access(automation, user):
+def _ensure_found(automation):
     if not automation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
-    if user.role != 'admin' and user.id != automation.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=ERROR_MESSAGES.UNAUTHORIZED,
-        )
+
+
+async def check_automation_view(automation, user, db):
+    """View access: owner, admin, a co-owner, or anyone if the automation is public."""
+    _ensure_found(automation)
+    if user.role == 'admin' or user.id == automation.user_id:
+        return
+    grants = automation.access_grants or []
+    if await has_access(user.id, 'read', grants, db=db) or await has_access(user.id, 'write', grants, db=db):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=ERROR_MESSAGES.UNAUTHORIZED,
+    )
+
+
+async def check_automation_manage(automation, user, db):
+    """Manage access: owner, admin, or a co-owner (a per-user write grant)."""
+    _ensure_found(automation)
+    if user.role == 'admin' or user.id == automation.user_id:
+        return
+    grants = automation.access_grants or []
+    if await has_access(user.id, 'write', grants, db=db):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=ERROR_MESSAGES.UNAUTHORIZED,
+    )
 
 
 async def check_automation_limits(request, user, rrule_str: str, db, is_create: bool = False):
@@ -190,7 +214,7 @@ async def get_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_view(automation, user, db)
     return await enrich_automation(automation, db, tz=user.timezone)
 
 
@@ -209,7 +233,7 @@ async def update_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage(automation, user, db)
 
     try:
         validate_rrule(form_data.data.rrule, tz=user.timezone)
@@ -240,7 +264,7 @@ async def toggle_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage(automation, user, db)
     toggled = await Automations.toggle(id, next_run_ns(automation.data['rrule'], tz=user.timezone), db=db)
     return await enrich_automation(toggled, db, tz=user.timezone)
 
@@ -259,7 +283,7 @@ async def run_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage(automation, user, db)
     asyncio.create_task(execute_automation(request.app, automation))
     return await enrich_automation(automation, db, tz=user.timezone)
 
@@ -278,7 +302,7 @@ async def delete_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage(automation, user, db)
     await AutomationRuns.delete_by_automation(id, db=db)
     return await Automations.delete(id, db=db)
 
@@ -299,5 +323,40 @@ async def get_automation_runs(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_view(automation, user, db)
     return await AutomationRuns.get_by_automation(id, skip=skip, limit=limit, db=db)
+
+
+############################
+# GetAutomationChat (view-through-automation)
+############################
+
+
+@router.get('/{id}/chat')
+async def get_automation_chat(
+    request: Request,
+    id: str,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Return the automation's latest generated chat to anyone who can view the
+    automation. The chat is owned by the automation owner and has no access
+    control of its own, so co-owners (and viewers of public automations) reach
+    it through the automation's permissions rather than chat ownership."""
+    await check_automations_permission(request, user)
+    automation = await Automations.get_by_id(id, db=db)
+    await check_automation_view(automation, user, db)
+
+    latest = await AutomationRuns.get_latest(id, db=db)
+    if not latest or not latest.chat_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+    chat = await Chats.get_chat_by_id(latest.chat_id, db=db)
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+    return chat
