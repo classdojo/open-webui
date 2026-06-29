@@ -491,6 +491,15 @@
 
 		if (event.chat_id === $chatId) {
 			await tick();
+
+			// classdojo: the katie-owui-mirror sidecar writes new messages straight
+			// to OWUI's Postgres, then fires a `chat:reload` event so the open tab
+			// re-fetches the chat from the server and renders them.
+			if (event?.data?.type === 'chat:reload') {
+				await loadChat();
+				return;
+			}
+
 			let message = history.messages[event.message_id];
 
 			if (message) {
