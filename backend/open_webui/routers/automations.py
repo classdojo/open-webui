@@ -15,6 +15,7 @@ from open_webui.models.automations import (
     Automations,
 )
 from open_webui.models.chats import Chats
+from open_webui.models.groups import Groups
 from open_webui.utils.access_control import has_access, has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.automations import (
@@ -147,12 +148,18 @@ async def get_automation_items(
     page = max(1, page)
     skip = (page - 1) * limit
 
+    # classdojo: include automations shared with any group the user belongs to,
+    # not just direct user grants (the list must match has_access).
+    user_groups = await Groups.get_groups_by_member_id(user.id, db=db)
+    user_group_ids = {group.id for group in user_groups}
+
     result = await Automations.search_automations(
         user_id=user.id,
         query=query,
         status=status,
         skip=skip,
         limit=limit,
+        user_group_ids=user_group_ids,
         db=db,
     )
 

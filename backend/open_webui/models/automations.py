@@ -175,21 +175,25 @@ class AutomationTable:
         status: Optional[str] = None,
         skip: int = 0,
         limit: int = 30,
+        user_group_ids: Optional[set[str]] = None,
         db: Optional[AsyncSession] = None,
     ) -> 'AutomationListResponse':
         async with get_async_db_context(db) as db:
-            # classdojo: return automations the user can see — ones they own, ones
-            # shared to them as a co-owner (a grant naming their id), or public
-            # ones (a '*' grant). Grants store quoted principal ids, so matching
-            # the quoted id / '*' in the JSON text is exact for the grant shapes
-            # we create (per-user + public; we never write group grants here).
-            stmt = select(Automation).where(
-                or_(
-                    Automation.user_id == user_id,
-                    cast(Automation.access_grants, String).contains(f'"{user_id}"'),
-                    cast(Automation.access_grants, String).contains('"*"'),
+            # classdojo: return automations the user can see — ones they own, public
+            # ones (a '*' grant), ones granted to them directly (a grant naming
+            # their user id), or ones granted to a group they belong to (a grant
+            # naming a group id). access_grants stores quoted principal ids, so
+            # matching the quoted id in the JSON text is exact for UUID ids.
+            access_conditions = [
+                Automation.user_id == user_id,
+                cast(Automation.access_grants, String).contains('"*"'),
+                cast(Automation.access_grants, String).contains(f'"{user_id}"'),
+            ]
+            for group_id in user_group_ids or set():
+                access_conditions.append(
+                    cast(Automation.access_grants, String).contains(f'"{group_id}"')
                 )
-            )
+            stmt = select(Automation).where(or_(*access_conditions))
 
             if query:
                 search = f'%{query}%'
