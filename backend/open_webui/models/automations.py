@@ -4,8 +4,10 @@ from typing import Literal, Optional
 from uuid import uuid4
 
 from open_webui.internal.db import Base, get_async_db_context
+from open_webui.models.access_grants import AccessGrantModel, AccessGrants
+from open_webui.models.groups import Groups
 from open_webui.utils.misc import json_text_variants
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import JSON, BigInteger, Boolean, Column, Index, String, Text, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,6 +89,7 @@ class AutomationModel(BaseModel):
     name: str
     data: dict
     meta: Optional[dict] = None
+    access_grants: list[AccessGrantModel] = Field(default_factory=list)
     is_active: bool
     last_run_at: Optional[int] = None
     next_run_at: Optional[int] = None
@@ -111,6 +114,7 @@ class AutomationForm(BaseModel):
     folder_id: Optional[str] = None
     data: AutomationData
     meta: Optional[dict] = None
+    access_grants: Optional[list[dict]] = None
     is_active: Optional[bool] = True
 
 
@@ -130,6 +134,20 @@ class AutomationListResponse(BaseModel):
 
 
 class AutomationTable:
+    async def _to_model(
+        self,
+        row: Automation,
+        access_grants: Optional[list[AccessGrantModel]] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> AutomationModel:
+        model = AutomationModel.model_validate(row)
+        model.access_grants = (
+            access_grants
+            if access_grants is not None
+            else await AccessGrants.get_grants_by_resource('automation', model.id, db=db)
+        )
+        return model
+
     async def insert(
         self,
         user_id: str,
@@ -153,7 +171,8 @@ class AutomationTable:
             )
             db.add(row)
             await db.commit()
-            return AutomationModel.model_validate(row)
+            await AccessGrants.set_access_grants('automation', row.id, form.access_grants, db=db)
+            return await self._to_model(row, db=db)
 
     async def count_by_user(self, user_id: str, db: Optional[AsyncSession] = None) -> int:
         async with get_async_db_context(db) as db:
@@ -163,7 +182,7 @@ class AutomationTable:
     async def get_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationModel]:
         async with get_async_db_context(db) as db:
             row = await db.get(Automation, id)
-            return AutomationModel.model_validate(row) if row else None
+            return await self._to_model(row, db=db) if row else None
 
     async def get_active_by_user(self, user_id: str, db: Optional[AsyncSession] = None) -> list[AutomationModel]:
         """Get active automations for a user (for calendar RRULE expansion)."""
@@ -184,7 +203,15 @@ class AutomationTable:
         db: Optional[AsyncSession] = None,
     ) -> 'AutomationListResponse':
         async with get_async_db_context(db) as db:
-            stmt = select(Automation).filter_by(user_id=user_id)
+            group_ids = {group.id for group in await Groups.get_groups_by_member_id(user_id, db=db)}
+            stmt = AccessGrants.has_permission_filter(
+                db=db,
+                query=select(Automation),
+                DocumentModel=Automation,
+                filter={'user_id': user_id, 'group_ids': group_ids},
+                resource_type='automation',
+                permission='read',
+            )
 
             if folder_id:
                 stmt = stmt.filter(Automation.folder_id == folder_id)
@@ -217,8 +244,9 @@ class AutomationTable:
 
             result = await db.execute(stmt)
             rows = result.scalars().all()
+            grants = await AccessGrants.get_grants_by_resources('automation', [row.id for row in rows], db=db)
             return AutomationListResponse(
-                items=[AutomationModel.model_validate(r) for r in rows],
+                items=[await self._to_model(row, access_grants=grants.get(row.id, []), db=db) for row in rows],
                 total=total,
             )
 
@@ -242,7 +270,8 @@ class AutomationTable:
             row.next_run_at = next_run_at
             row.updated_at = int(time.time_ns())
             await db.commit()
-            return AutomationModel.model_validate(row)
+            await AccessGrants.set_access_grants('automation', id, form.access_grants, db=db)
+            return await self._to_model(row, db=db)
 
     async def clear_folder_ids(
         self,
@@ -275,13 +304,14 @@ class AutomationTable:
             row.next_run_at = next_run_at if row.is_active else None
             row.updated_at = int(time.time_ns())
             await db.commit()
-            return AutomationModel.model_validate(row)
+            return await self._to_model(row, db=db)
 
     async def delete(self, id: str, db: Optional[AsyncSession] = None) -> bool:
         async with get_async_db_context(db) as db:
             row = await db.get(Automation, id)
             if not row:
                 return False
+            await AccessGrants.revoke_all_access('automation', id, db=db)
             await db.delete(row)
             await db.commit()
             return True

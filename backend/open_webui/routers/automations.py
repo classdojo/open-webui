@@ -58,12 +58,32 @@ async def check_automations_permission(request, user):
         )
 
 
-def check_automation_access(automation, user):
-    if not automation or user.id != automation.user_id:
+def _ensure_found(automation):
+    if not automation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
+
+
+async def check_automation_view(automation, user, db):
+    _ensure_found(automation)
+    if user.role == 'admin' or user.id == automation.user_id:
+        return
+    if await AccessGrants.has_access(user.id, 'automation', automation.id, 'read', db=db) or await AccessGrants.has_access(
+        user.id, 'automation', automation.id, 'write', db=db
+    ):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.UNAUTHORIZED)
+
+
+async def check_automation_manage(automation, user, db):
+    _ensure_found(automation)
+    if user.role == 'admin' or user.id == automation.user_id:
+        return
+    if await AccessGrants.has_access(user.id, 'automation', automation.id, 'write', db=db):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.UNAUTHORIZED)
 
 
 async def check_automation_limits(request, user, rrule_str: str, db, is_create: bool = False):
@@ -252,7 +272,7 @@ async def get_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_view(automation, user, db)
     return await enrich_automation(automation, db, tz=user.timezone)
 
 
@@ -271,9 +291,12 @@ async def update_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
-    await check_automation_folder_access(form_data.folder_id, user, db)
-    await check_automation_channel_access(form_data, user, db)
+    await check_automation_manage(automation, user, db)
+    if form_data.folder_id != automation.folder_id:
+        await check_automation_folder_access(form_data.folder_id, user, db)
+    target = form_data.data.target.model_dump() if form_data.data.target else None
+    if target != automation.data.get('target'):
+        await check_automation_channel_access(form_data, user, db)
 
     try:
         validate_rrule(form_data.data.rrule, tz=user.timezone)
@@ -312,7 +335,7 @@ async def toggle_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage(automation, user, db)
     toggled = await Automations.toggle(id, next_run_ns(automation.data['rrule'], tz=user.timezone), db=db)
     response = await enrich_automation(toggled, db, tz=user.timezone)
     await publish_event(
@@ -340,7 +363,7 @@ async def run_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage(automation, user, db)
     asyncio.create_task(execute_automation(request.app, automation))
     await publish_event(
         request,
@@ -366,7 +389,7 @@ async def delete_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage(automation, user, db)
     await AutomationRuns.delete_by_automation(id, db=db)
     result = await Automations.delete(id, db=db)
     if result:
@@ -396,5 +419,5 @@ async def get_automation_runs(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_view(automation, user, db)
     return await AutomationRuns.get_by_automation(id, skip=skip, limit=limit, db=db)
