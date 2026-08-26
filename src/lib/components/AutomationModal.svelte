@@ -9,6 +9,7 @@
 	import ScheduleDropdown from '$lib/components/automations/ScheduleDropdown.svelte';
 	import ModelDropdown from '$lib/components/automations/ModelDropdown.svelte';
 	import DestinationDropdown from '$lib/components/automations/DestinationDropdown.svelte';
+	import AccessControl from '$lib/components/workspace/common/AccessControl.svelte';
 	import { getFolders } from '$lib/apis/folders';
 	import { getChannels } from '$lib/apis/channels';
 	import { channels, folders } from '$lib/stores';
@@ -16,6 +17,7 @@
 	import {
 		createAutomation,
 		updateAutomationById,
+		type AutomationAccessGrant,
 		type AutomationForm,
 		type AutomationResponse
 	} from '$lib/apis/automations';
@@ -34,6 +36,7 @@
 	let target_type: 'chat' | 'channel' = 'chat';
 	let channel_id = '';
 	let is_active = true;
+	let accessGrants: AutomationAccessGrant[] = [];
 
 	let loading = false;
 	let foldersLoaded = false;
@@ -69,6 +72,7 @@
 					rrule: scheduleDropdown.buildRrule(),
 					target: target_type === 'channel' ? { type: 'channel', channel_id } : { type: 'chat' }
 				},
+				access_grants: accessGrants,
 				is_active
 			};
 
@@ -84,7 +88,7 @@
 				dispatch('save', { id: created?.id });
 			}
 		} catch (e: any) {
-			toast.error(e?.detail ?? `${e}` ?? 'Failed to save');
+			toast.error(e?.detail ?? `${e}`);
 		} finally {
 			loading = false;
 		}
@@ -111,6 +115,7 @@
 			target_type = automation.data.target?.type === 'channel' ? 'channel' : 'chat';
 			channel_id = automation.data.target?.channel_id ?? '';
 			is_active = automation.is_active;
+			accessGrants = automation.access_grants ?? [];
 			if (scheduleDropdown) {
 				scheduleDropdown.parseRrule(automation.data.rrule);
 			}
@@ -128,6 +133,7 @@
 				? (cloneFrom.data.target?.channel_id ?? '')
 				: '';
 			is_active = true;
+			accessGrants = [];
 			if (scheduleDropdown) {
 				scheduleDropdown.parseRrule(cloneFrom.data.rrule);
 			}
@@ -139,6 +145,7 @@
 			target_type = 'chat';
 			channel_id = '';
 			is_active = true;
+			accessGrants = [];
 		}
 	};
 
@@ -174,7 +181,12 @@
 				bind:value={prompt}
 				rows={8}
 				placeholder={$i18n.t('Enter prompt here.')}
-			/>
+			></textarea>
+		</div>
+
+		<div class="px-5 pb-3">
+			<div class="mb-1 text-xs text-gray-500">{$i18n.t('Sharing')}</div>
+			<AccessControl bind:accessGrants accessRoles={['read', 'write']} />
 		</div>
 
 		<!-- Bottom toolbar -->

@@ -177,7 +177,7 @@
 		});
 		if (!allAutomations) return;
 
-		const targets = allAutomations.filter((a) => a.is_active !== enable);
+		const targets = allAutomations.filter((a) => a.write_access && a.is_active !== enable);
 		if (targets.length === 0) return;
 
 		try {
@@ -616,6 +616,7 @@
 
 							<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
 								<AutomationMenu
+									canManage={automation.write_access}
 									show={openAutomationMenuId === automation.id}
 									editHandler={() => {
 										goto(`/automations/${automation.id}`);
@@ -649,25 +650,27 @@
 									</button>
 								</AutomationMenu>
 
-								<button
-									class="flex h-6 items-center"
-									type="button"
-									on:click={(e) => {
-										e.stopPropagation();
-										e.preventDefault();
-									}}
-								>
-									<Tooltip
-										content={automation.is_active ? $i18n.t('Enabled') : $i18n.t('Disabled')}
+								{#if automation.write_access}
+									<button
+										class="flex h-6 items-center"
+										type="button"
+										on:click={(e) => {
+											e.stopPropagation();
+											e.preventDefault();
+										}}
 									>
-										<Switch
-											bind:state={automation.is_active}
-											on:change={() => {
-												toggleHandler(automation);
-											}}
-										/>
-									</Tooltip>
-								</button>
+										<Tooltip
+											content={automation.is_active ? $i18n.t('Enabled') : $i18n.t('Disabled')}
+										>
+											<Switch
+												bind:state={automation.is_active}
+												on:change={() => {
+													toggleHandler(automation);
+												}}
+											/>
+										</Tooltip>
+									</button>
+								{/if}
 							</div>
 						</div>
 					{/each}

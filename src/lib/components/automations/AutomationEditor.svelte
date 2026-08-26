@@ -23,6 +23,7 @@
 
 	import AutomationModal from '$lib/components/AutomationModal.svelte';
 	import AutomationItemHeaderActions from '$lib/components/automations/AutomationItemHeaderActions.svelte';
+	import AutomationChatModal from '$lib/components/automations/AutomationChatModal.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import ArrowRight from '$lib/components/icons/ArrowRight.svelte';
@@ -39,6 +40,8 @@
 	let loading = false;
 	let showDeleteConfirm = false;
 	let showEditModal = false;
+	let showChatModal = false;
+	let chatModalChatId: string | null = null;
 
 	let runs: AutomationRunModel[] = [];
 	let runsLoading = false;
@@ -245,6 +248,7 @@
 			itemName: automation.name,
 			actions: AutomationItemHeaderActions,
 			actionProps: {
+				canManage: automation.write_access,
 				isActive: is_active,
 				loading,
 				toggleHandler,
@@ -274,6 +278,11 @@
 </DeleteConfirmDialog>
 
 <AutomationModal bind:show={showEditModal} {automation} on:save={editSavedHandler} />
+<AutomationChatModal
+	bind:show={showChatModal}
+	automationId={automation.id}
+	chatId={chatModalChatId}
+/>
 
 <div class="h-full overflow-y-auto scrollbar-hidden">
 	<div class="pb-1 px-1">
@@ -380,7 +389,8 @@
 										if (run.chat_id?.startsWith('channel:')) {
 											goto(`/channels/${run.chat_id.replace('channel:', '')}`);
 										} else {
-											goto(`/c/${run.chat_id}`);
+											chatModalChatId = run.chat_id;
+											showChatModal = true;
 										}
 									}}
 									type="button"

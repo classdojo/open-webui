@@ -6,21 +6,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
+from open_webui.models.access_grants import AccessGrants, has_public_write_access_grant
 from open_webui.models.automations import (
     AutomationForm,
-    AutomationListResponse,
     AutomationModel,
     AutomationResponse,
     AutomationRunModel,
     AutomationRuns,
     Automations,
 )
-from open_webui.models.access_grants import AccessGrants, has_public_write_access_grant
 from open_webui.models.channels import Channels
+from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.models.folders import Folders
+from open_webui.models.groups import Groups
 from open_webui.utils.access_control import has_permission
-from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.auth import get_verified_user
 from open_webui.utils.automations import (
     execute_automation,
     next_n_runs_ns,
@@ -70,20 +71,26 @@ async def check_automation_view(automation, user, db):
     _ensure_found(automation)
     if user.role == 'admin' or user.id == automation.user_id:
         return
-    if await AccessGrants.has_access(user.id, 'automation', automation.id, 'read', db=db) or await AccessGrants.has_access(
-        user.id, 'automation', automation.id, 'write', db=db
-    ):
+    if await AccessGrants.has_access(
+        user.id, 'automation', automation.id, 'read', db=db
+    ) or await AccessGrants.has_access(user.id, 'automation', automation.id, 'write', db=db):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.UNAUTHORIZED)
 
 
 async def check_automation_manage(automation, user, db):
     _ensure_found(automation)
-    if user.role == 'admin' or user.id == automation.user_id:
-        return
-    if await AccessGrants.has_access(user.id, 'automation', automation.id, 'write', db=db):
+    if await has_automation_manage_access(automation, user, db):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.UNAUTHORIZED)
+
+
+async def has_automation_manage_access(automation, user, db):
+    return (
+        user.role == 'admin'
+        or user.id == automation.user_id
+        or await AccessGrants.has_access(user.id, 'automation', automation.id, 'write', db=db)
+    )
 
 
 async def check_automation_limits(request, user, rrule_str: str, db, is_create: bool = False):
@@ -164,11 +171,14 @@ async def check_automation_channel_access(form_data: AutomationForm, user, db: A
         )
 
 
-async def enrich_automation(automation: AutomationModel, db: AsyncSession, tz: str = None) -> AutomationResponse:
+async def enrich_automation(
+    automation: AutomationModel, db: AsyncSession, tz: str = None, write_access: bool = False
+) -> AutomationResponse:
     """Full enrichment for single-item views (includes next_runs computation)."""
     last_run = await AutomationRuns.get_latest(automation.id, db=db)
     return AutomationResponse(
         **automation.model_dump(),
+        write_access=write_access,
         last_run=last_run,
         next_runs=next_n_runs_ns(automation.data['rrule'], tz=tz),
     )
@@ -207,11 +217,16 @@ async def get_automation_items(
     # Batch-fetch latest runs in a single query instead of N+1
     ids = [item.id for item in result.items]
     latest_runs = await AutomationRuns.get_latest_batch(ids, db=db) if ids else {}
+    group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, db=db)}
+    writable_ids = await AccessGrants.get_accessible_resource_ids(
+        user.id, 'automation', ids, 'write', user_group_ids=group_ids, db=db
+    )
 
     return {
         'items': [
             AutomationResponse(
                 **item.model_dump(),
+                write_access=user.role == 'admin' or item.user_id == user.id or item.id in writable_ids,
                 last_run=latest_runs.get(item.id),
             )
             for item in result.items
@@ -247,7 +262,7 @@ async def create_new_automation(
 
     tz = user.timezone
     automation = await Automations.insert(user.id, form_data, next_run_ns(form_data.data.rrule, tz=tz), db=db)
-    response = await enrich_automation(automation, db, tz=tz)
+    response = await enrich_automation(automation, db, tz=tz, write_access=True)
     await publish_event(
         request,
         EVENTS.AUTOMATION_CREATED,
@@ -273,7 +288,12 @@ async def get_automation_by_id(
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
     await check_automation_view(automation, user, db)
-    return await enrich_automation(automation, db, tz=user.timezone)
+    return await enrich_automation(
+        automation,
+        db,
+        tz=user.timezone,
+        write_access=await has_automation_manage_access(automation, user, db),
+    )
 
 
 ############################
@@ -310,7 +330,7 @@ async def update_automation_by_id(
 
     tz = user.timezone
     updated = await Automations.update_by_id(id, form_data, next_run_ns(form_data.data.rrule, tz=tz), db=db)
-    response = await enrich_automation(updated, db, tz=tz)
+    response = await enrich_automation(updated, db, tz=tz, write_access=True)
     await publish_event(
         request,
         EVENTS.AUTOMATION_UPDATED,
@@ -337,7 +357,7 @@ async def toggle_automation_by_id(
     automation = await Automations.get_by_id(id, db=db)
     await check_automation_manage(automation, user, db)
     toggled = await Automations.toggle(id, next_run_ns(automation.data['rrule'], tz=user.timezone), db=db)
-    response = await enrich_automation(toggled, db, tz=user.timezone)
+    response = await enrich_automation(toggled, db, tz=user.timezone, write_access=True)
     await publish_event(
         request,
         EVENTS.AUTOMATION_ENABLED if toggled.is_active else EVENTS.AUTOMATION_DISABLED,
@@ -364,7 +384,7 @@ async def run_automation_by_id(
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
     await check_automation_manage(automation, user, db)
-    asyncio.create_task(execute_automation(request.app, automation))
+    asyncio.create_task(execute_automation(request.app, automation, run_as_user_id=user.id))
     await publish_event(
         request,
         EVENTS.AUTOMATION_RUN_STARTED,
@@ -372,7 +392,7 @@ async def run_automation_by_id(
         subject_id=automation.id,
         data={'name': automation.name},
     )
-    return await enrich_automation(automation, db, tz=user.timezone)
+    return await enrich_automation(automation, db, tz=user.timezone, write_access=True)
 
 
 ############################
@@ -421,3 +441,30 @@ async def get_automation_runs(
     automation = await Automations.get_by_id(id, db=db)
     await check_automation_view(automation, user, db)
     return await AutomationRuns.get_by_automation(id, skip=skip, limit=limit, db=db)
+
+
+@router.get('/{id}/chat')
+async def get_automation_chat(
+    request: Request,
+    id: str,
+    chat_id: Optional[str] = None,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    await check_automations_permission(request, user)
+    automation = await Automations.get_by_id(id, db=db)
+    await check_automation_view(automation, user, db)
+
+    if chat_id:
+        run = await AutomationRuns.get_by_chat_id(id, chat_id, db=db)
+        target_chat_id = run.chat_id if run else None
+    else:
+        latest = await AutomationRuns.get_latest(id, db=db)
+        target_chat_id = latest.chat_id if latest else None
+
+    if not target_chat_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+    chat = await Chats.get_chat_by_id(target_chat_id, db=db)
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+    return chat

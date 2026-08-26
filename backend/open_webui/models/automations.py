@@ -119,6 +119,7 @@ class AutomationForm(BaseModel):
 
 
 class AutomationResponse(AutomationModel):
+    write_access: bool = False
     last_run: Optional[AutomationRunModel] = None
     next_runs: Optional[list[int]] = None
 
@@ -396,6 +397,16 @@ class AutomationRunTable:
                 .filter_by(automation_id=automation_id)
                 .order_by(AutomationRun.created_at.desc())
                 .limit(1)
+            )
+            row = result.scalars().first()
+            return AutomationRunModel.model_validate(row) if row else None
+
+    async def get_by_chat_id(
+        self, automation_id: str, chat_id: str, db: Optional[AsyncSession] = None
+    ) -> Optional[AutomationRunModel]:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(AutomationRun).filter_by(automation_id=automation_id, chat_id=chat_id).limit(1)
             )
             row = result.scalars().first()
             return AutomationRunModel.model_validate(row) if row else None

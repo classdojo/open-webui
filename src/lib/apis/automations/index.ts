@@ -18,6 +18,13 @@ export type AutomationData = {
 	target?: AutomationTarget | null;
 };
 
+export type AutomationAccessGrant = {
+	id?: string;
+	principal_type: 'user' | 'group' | 'anyone';
+	principal_id: string;
+	permission: 'read' | 'write';
+};
+
 export type AutomationForm = {
 	name: string;
 	folder_id?: string | null;
@@ -28,6 +35,7 @@ export type AutomationForm = {
 		max_tokens?: number;
 		webhook?: string;
 	};
+	access_grants?: AutomationAccessGrant[];
 	is_active?: boolean;
 };
 
@@ -40,6 +48,24 @@ export type AutomationRunModel = {
 	created_at: number;
 };
 
+export type AutomationChatMessage = {
+	id: string;
+	role?: string;
+	model?: string;
+	content?: string;
+};
+
+export type AutomationChat = {
+	chat?: {
+		title?: string;
+		history?: {
+			currentId?: string;
+			messages?: Record<string, AutomationChatMessage>;
+		};
+		messages?: AutomationChatMessage[];
+	};
+};
+
 export type AutomationResponse = {
 	id: string;
 	user_id: string;
@@ -47,6 +73,8 @@ export type AutomationResponse = {
 	name: string;
 	data: AutomationData;
 	meta: Record<string, any> | null;
+	access_grants: AutomationAccessGrant[];
+	write_access: boolean;
 	is_active: boolean;
 	last_run_at: number | null;
 	next_run_at: number | null;
@@ -159,6 +187,36 @@ export const getAutomationById = async (token: string, id: string) => {
 		throw error;
 	}
 
+	return res;
+};
+
+export const getAutomationChat = async (
+	token: string,
+	id: string,
+	chatId: string | null = null
+): Promise<AutomationChat | null> => {
+	let error = null;
+	const query = chatId ? `?chat_id=${encodeURIComponent(chatId)}` : '';
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/automations/${id}/chat${query}`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err.detail;
+			console.error(err);
+			return null;
+		});
+
+	if (error) throw error;
 	return res;
 };
 

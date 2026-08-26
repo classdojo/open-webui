@@ -42,7 +42,7 @@ def _normalized(grants):
         principal_type = grant.get('principal_type')
         principal_id = grant.get('principal_id')
         permission = grant.get('permission')
-        if principal_type not in {'user', 'group', 'anyone'} or not isinstance(principal_id, str):
+        if principal_type not in {'user', 'group', 'anyone'} or not isinstance(principal_id, str) or not principal_id:
             continue
         if permission not in {'read', 'write'}:
             continue
@@ -122,7 +122,5 @@ def downgrade():
         )
 
     for automation_id, grants in grants_by_automation.items():
-        conn.execute(
-            automation.update().where(automation.c.id == automation_id).values(access_grants=grants)
-        )
+        conn.execute(automation.update().where(automation.c.id == automation_id).values(access_grants=grants))
     conn.execute(access_grant.delete().where(access_grant.c.resource_type == 'automation'))

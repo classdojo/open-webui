@@ -473,7 +473,7 @@ async def _execute_channel_automation(
             'message_id': assistant_message.id,
             'status': 'success',
         },
-        room=f'user:{automation.user_id}',
+        room=f'user:{user.id}',
     )
 
     await _record_run(automation.id, 'success', chat_id=f'channel:{channel.id}')
@@ -486,7 +486,7 @@ async def _execute_channel_automation(
     )
 
 
-async def execute_automation(app, automation: AutomationModel) -> None:
+async def execute_automation(app, automation: AutomationModel, run_as_user_id: Optional[str] = None) -> None:
     """Execute an automation through the full chat completion pipeline.
 
     Creates a real chat or channel message, then calls chat_completion exactly like the frontend:
@@ -494,7 +494,8 @@ async def execute_automation(app, automation: AutomationModel) -> None:
     (filters, model params, knowledge/RAG, tools, DB saves, webhooks).
     """
     try:
-        user = await Users.get_user_by_id(automation.user_id)
+        effective_user_id = run_as_user_id or automation.user_id
+        user = await Users.get_user_by_id(effective_user_id)
         if not user:
             await _record_run(automation.id, 'error', error='User not found')
             await publish_event(
@@ -540,8 +541,9 @@ async def execute_automation(app, automation: AutomationModel) -> None:
             return
 
         folder_id = automation.folder_id
-        if folder_id and not await Folders.get_folder_by_id_and_user_id(folder_id, automation.user_id):
-            await Automations.clear_folder_ids(automation.user_id, [folder_id])
+        if folder_id and not await Folders.get_folder_by_id_and_user_id(folder_id, effective_user_id):
+            if run_as_user_id is None:
+                await Automations.clear_folder_ids(automation.user_id, [folder_id])
             folder_id = None
 
         # Generate proper UUIDs for messages (same as frontend)
@@ -551,7 +553,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         chat_id = str(uuid4())
         chat = await Chats.insert_new_chat(
             chat_id,
-            automation.user_id,
+            effective_user_id,
             ChatForm(
                 folder_id=folder_id,
                 chat={
@@ -611,7 +613,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
                 'message_id': user_msg_id,
                 'data': {'type': 'chat:list'},
             },
-            room=f'user:{automation.user_id}',
+            room=f'user:{effective_user_id}',
         )
 
         # Resolve model defaults (frontend does this, backend doesn't)
@@ -660,7 +662,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
                 'chat_id': chat.id,
                 'status': 'success',
             },
-            room=f'user:{automation.user_id}',
+            room=f'user:{effective_user_id}',
         )
 
         await _record_run(automation.id, 'success', chat_id=chat.id)
