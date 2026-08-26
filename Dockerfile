@@ -27,9 +27,8 @@ ARG GID=0
 FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
 ARG BUILD_HASH
 
-# classdojo: uncommented — OWUI's vite build OOMs the default ~2GB Node heap
-# (JavaScript heap out of memory / SIGABRT) on both local Docker and CI.
-ENV NODE_OPTIONS="--max-old-space-size=4096"
+# classdojo: OWUI's vite build OOMs Node's default heap in Docker and CI.
+ENV NODE_OPTIONS="--max-old-space-size=8192"
 
 WORKDIR /app
 
